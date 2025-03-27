@@ -30,7 +30,6 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="index" />
-        <Stack.Screen name="+not-found" />
       </Stack>
     </ThemeProvider>
   );
