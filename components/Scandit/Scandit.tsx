@@ -69,7 +69,7 @@ export const Scandit = () => {
       handleAppStateChangeSubscription.remove();
 
       stopCapture(); // Attempt to stop camera fails
-      dataCaptureContext.dispose();
+      dataCaptureContext.removeAllModes();
     };
   }, []);
 
