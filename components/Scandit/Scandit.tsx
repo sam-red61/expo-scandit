@@ -19,27 +19,27 @@ import {
   RectangularViewfinderStyle,
   RectangularViewfinderLineStyle,
   VideoResolution,
-} from 'scandit-react-native-datacapture-core';
+  TorchSwitchControl,
+} from "scandit-react-native-datacapture-core";
 
-import { requestCameraPermissionsIfNeeded } from './camera-permission-handler';
+import { requestCameraPermissionsIfNeeded } from "./camera-permission-handler";
 
 export const Scandit = () => {
-  console.log('Scandit')
-
   const viewRef = useRef<DataCaptureView>(null);
 
   const dataCaptureContext = useMemo(() => {
     // Enter your Scandit License key here.
     // Your Scandit License key is available via your Scandit SDK web account.
     return DataCaptureContext.forLicenseKey(
-      '-- ENTER YOUR SCANDIT LICENSE KEY HERE --'
+      "-- ENTER YOUR SCANDIT LICENSE KEY HERE --"
     );
   }, []);
 
   const [appStateVisible, setAppStateVisible] = useState(AppState.currentState);
 
   const [camera, setCamera] = useState<Camera | null>(null);
-  const [barcodeCaptureMode, setBarcodeCaptureMode] = useState<BarcodeCapture | null>(null);
+  const [barcodeCaptureMode, setBarcodeCaptureMode] =
+    useState<BarcodeCapture | null>(null);
   const [isBarcodeCaptureEnabled, setIsBarcodeCaptureEnabled] = useState(false);
   const [cameraState, setCameraState] = useState(FrameSourceState.Off);
 
@@ -49,17 +49,32 @@ export const Scandit = () => {
   const lastCommand = useRef<string | null>(null);
 
   useEffect(() => {
-    const handleAppStateChangeSubscription = AppState.addEventListener('change', handleAppStateChange);
+    const handleAppStateChangeSubscription = AppState.addEventListener(
+      "change",
+      handleAppStateChange
+    );
     setupScanning();
+
+    // Add torch control
+    const torchControl = new TorchSwitchControl();
+    viewRef.current?.addControl(torchControl);
+
     startCapture();
     return () => {
+      console.log("===== start cleanup =====");
+      console.log("viewRef.current:", viewRef.current); // null
+      console.log("camera:", camera); // null
+
+      viewRef.current?.removeControl(torchControl); // Attempt to remove torch fails
       handleAppStateChangeSubscription.remove();
-      stopCapture();
+
+      stopCapture(); // Attempt to stop camera fails
       dataCaptureContext.dispose();
-    }
+    };
   }, []);
 
   useEffect(() => {
+    console.log("useEffect running when cameraState changes"); // never runs in the cleanup
     if (camera) {
       camera.switchToDesiredState(cameraState);
     }
@@ -88,7 +103,7 @@ export const Scandit = () => {
     // default and must be turned on to start streaming frames to the data capture context for recognition.
     const cameraSettings = new CameraSettings();
     cameraSettings.preferredResolution = VideoResolution.FullHD;
-    
+
     const camera = Camera.withSettings(cameraSettings);
     dataCaptureContext.setFrameSource(camera);
     setCamera(camera);
@@ -117,17 +132,22 @@ export const Scandit = () => {
     // symbol counts" for this symbology. This is shown in the following few lines of code for one of the
     // variable-length symbologies.
     const symbologySettings = settings.settingsForSymbology(Symbology.Code39);
-    symbologySettings.activeSymbolCounts = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+    symbologySettings.activeSymbolCounts = [
+      7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ];
 
     // Create new barcode capture mode with the settings from above.
-    const barcodeCapture = BarcodeCapture.forContext(dataCaptureContext, settings);
+    const barcodeCapture = BarcodeCapture.forContext(
+      dataCaptureContext,
+      settings
+    );
 
     // Register a listener to get informed whenever a new barcode got recognized.
     const barcodeCaptureListener = {
       didScan: async (_: BarcodeCapture, session: BarcodeCaptureSession) => {
         const barcode = session.newlyRecognizedBarcode;
         if (barcode == null) return;
-        
+
         const symbology = new SymbologyDescription(barcode.symbology);
 
         // The `alert` call blocks execution until it's dismissed by the user. As no further frames would be processed
@@ -137,12 +157,12 @@ export const Scandit = () => {
         setIsBarcodeCaptureEnabled(false);
 
         Alert.alert(
-          '',
+          "",
           `Scanned: ${barcode.data} (${symbology.readableName})`,
-          [{ text: 'OK', onPress: () => setIsBarcodeCaptureEnabled(true) }],
+          [{ text: "OK", onPress: () => setIsBarcodeCaptureEnabled(true) }],
           { cancelable: false }
         );
-      }
+      },
     };
 
     // Add the listener to the barcode capture context.
@@ -151,32 +171,32 @@ export const Scandit = () => {
     // Add a barcode capture overlay to the data capture view to render the location of captured barcodes on top of
     // the video preview, using the Frame overlay style. This is optional, but recommended for better visual feedback.
     const overlay = BarcodeCaptureOverlay.withBarcodeCaptureForViewWithStyle(
-        barcodeCapture,
-        null,
-        BarcodeCaptureOverlayStyle.Frame
+      barcodeCapture,
+      null,
+      BarcodeCaptureOverlayStyle.Frame
     );
     overlay.viewfinder = new RectangularViewfinder(
-        RectangularViewfinderStyle.Square,
-        RectangularViewfinderLineStyle.Light,
+      RectangularViewfinderStyle.Square,
+      RectangularViewfinderLineStyle.Light
     );
     viewRef.current?.addOverlay(overlay);
     setBarcodeCaptureMode(barcodeCapture);
   };
 
   const startCapture = async () => {
-    if (lastCommand.current === 'startCapture') {
+    if (lastCommand.current === "startCapture") {
       return;
     }
-    lastCommand.current = 'startCapture';
+    lastCommand.current = "startCapture";
     startCamera();
     setIsBarcodeCaptureEnabled(true);
   };
 
   const stopCapture = () => {
-    if (lastCommand.current === 'stopCapture') {
+    if (lastCommand.current === "stopCapture") {
       return;
     }
-    lastCommand.current = 'stopCapture';
+    lastCommand.current = "stopCapture";
     setIsBarcodeCaptureEnabled(false);
     stopCamera();
   };
@@ -187,15 +207,22 @@ export const Scandit = () => {
     requestCameraPermissionsIfNeeded()
       .then(() => setCameraState(FrameSourceState.On))
       .catch(() => BackHandler.exitApp());
-  }
+  };
 
   const stopCamera = () => {
+    console.log("running stopCamera");
+    console.log("cameraState:", cameraState, setCameraState); // 'off', [Function bound dispatchSetState]
+
     if (camera) {
       setCameraState(FrameSourceState.Off);
     }
-  }
+  };
 
   return (
-    <DataCaptureView style={{ flex: 1, width: '100%' }} context={dataCaptureContext} ref={viewRef} />
+    <DataCaptureView
+      style={{ flex: 1, width: "100%" }}
+      context={dataCaptureContext}
+      ref={viewRef}
+    />
   );
-}
+};
