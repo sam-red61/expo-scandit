@@ -74,7 +74,7 @@ export const Scandit = () => {
   }, []);
 
   useEffect(() => {
-    console.log("useEffect running when cameraState changes"); // never runs in the cleanup
+    console.log("useEffect running when cameraState changes to", cameraState); // never runs in the cleanup
     if (camera) {
       camera.switchToDesiredState(cameraState);
     }
@@ -99,6 +99,8 @@ export const Scandit = () => {
   }, [appStateVisible]);
 
   const setupScanning = () => {
+    console.log("===== setupScanning runs once on mount =====");
+
     // Use the world-facing (back) camera and set it as the frame source of the context. The camera is off by
     // default and must be turned on to start streaming frames to the data capture context for recognition.
     const cameraSettings = new CameraSettings();
