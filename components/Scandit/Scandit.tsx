@@ -37,6 +37,8 @@ const scannedBrush = Color.fromRGBA(40, 211, 128, 0.5);
 export const Scandit = () => {
   const viewRef = useRef<DataCaptureView | null>(null);
 
+  console.log("Scandit");
+
   const [appStateVisible, setAppStateVisible] = useState(AppState.currentState);
 
   const camera = useRef<Camera | null>(null);
