@@ -1,90 +1,102 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, AppStateStatus, BackHandler } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AppState,
+  AppStateStatus,
+  Image,
+  Text,
+  Pressable,
+  View,
+} from "react-native";
+import {
+  Barcode,
   BarcodeCapture,
   BarcodeCaptureOverlay,
-  BarcodeCaptureOverlayStyle,
   BarcodeCaptureSession,
   BarcodeCaptureSettings,
   Symbology,
-  SymbologyDescription,
-} from 'scandit-react-native-datacapture-barcode';
+} from "scandit-react-native-datacapture-barcode";
 import {
-  Camera,
-  CameraSettings,
-  DataCaptureContext,
   DataCaptureView,
+  Camera,
   FrameSourceState,
-  RectangularViewfinder,
-  RectangularViewfinderStyle,
-  RectangularViewfinderLineStyle,
   VideoResolution,
-  TorchSwitchControl,
+  AimerViewfinder,
+  MeasureUnit,
+  NumberWithUnit,
+  RadiusLocationSelection,
+  Brush,
+  Color,
+  DataCaptureContext,
 } from "scandit-react-native-datacapture-core";
+import { useFocusEffect } from "@react-navigation/native";
 
-import { requestCameraPermissionsIfNeeded } from "./camera-permission-handler";
+import dataCaptureContext from "./CaptureContext";
+
+const scannedBrush = Color.fromRGBA(40, 211, 128, 0.5);
 
 export const Scandit = () => {
-  const viewRef = useRef<DataCaptureView>(null);
-
-  const dataCaptureContext = useMemo(() => {
-    // Enter your Scandit License key here.
-    // Your Scandit License key is available via your Scandit SDK web account.
-    return DataCaptureContext.forLicenseKey(
-      "-- ENTER YOUR SCANDIT LICENSE KEY HERE --"
-    );
-  }, []);
+  const viewRef = useRef<DataCaptureView | null>(null);
 
   const [appStateVisible, setAppStateVisible] = useState(AppState.currentState);
 
-  const [camera, setCamera] = useState<Camera | null>(null);
-  const [barcodeCaptureMode, setBarcodeCaptureMode] =
-    useState<BarcodeCapture | null>(null);
-  const [isBarcodeCaptureEnabled, setIsBarcodeCaptureEnabled] = useState(false);
-  const [cameraState, setCameraState] = useState(FrameSourceState.Off);
+  const camera = useRef<Camera | null>(null);
+
+  const barcodeCaptureMode = useRef<BarcodeCapture>(null!);
+  if (!barcodeCaptureMode.current) {
+    barcodeCaptureMode.current = setupScanning();
+  }
+
+  const overlay = useRef<BarcodeCaptureOverlay>(null!);
+  if (!overlay.current) {
+    overlay.current = setupOverlay();
+  }
+
+  const [code, setCode] = useState<Barcode | null>(null);
+  const [isModalVisible, setModalVisible] = useState(false);
 
   // Due to a React Native issue with firing the AppState 'change' event on iOS, we want to avoid triggering
   // a startCapture/stopCapture on the scanner twice in a row. We work around this by keeping track of the
   // latest command that was run, and skipping a repeated call for starting or stopping scanning.
   const lastCommand = useRef<string | null>(null);
 
+  useFocusEffect(
+    useCallback(() => {
+      // Screen is focused.
+      const handleAppStateChangeSubscription = AppState.addEventListener(
+        "change",
+        handleAppStateChange
+      );
+
+      // Always re-setup when screen becomes focused to ensure listeners are attached and overlay is added to the view
+      barcodeCaptureMode.current = setupScanning();
+      overlay.current = setupOverlay();
+      viewRef.current?.addOverlay(overlay.current);
+
+      const initCamera = async () => {
+        if (!camera.current) {
+          camera.current = await setupCamera();
+        }
+      };
+
+      initCamera();
+
+      return () => {
+        // Screen is unfocused, remove mode, overlay, and camera from the context
+        handleAppStateChangeSubscription.remove();
+        dataCaptureContext.removeMode(barcodeCaptureMode.current);
+        camera.current = null;
+        dataCaptureContext.setFrameSource(null);
+        viewRef.current?.removeOverlay(overlay.current);
+      };
+    }, [])
+  );
+
   useEffect(() => {
-    const handleAppStateChangeSubscription = AppState.addEventListener(
-      "change",
-      handleAppStateChange
-    );
-    setupScanning();
-
-    // Add torch control
-    const torchControl = new TorchSwitchControl();
-    viewRef.current?.addControl(torchControl);
-
-    startCapture();
     return () => {
-      console.log("===== start cleanup =====");
-      console.log("viewRef.current:", viewRef.current); // null
-      console.log("camera:", camera); // null
-
-      viewRef.current?.removeControl(torchControl); // Attempt to remove torch fails
-      handleAppStateChangeSubscription.remove();
-
-      stopCapture(); // Attempt to stop camera fails
-      dataCaptureContext.removeAllModes();
+      stopCapture();
+      dataCaptureContext.removeMode(barcodeCaptureMode.current);
     };
   }, []);
-
-  useEffect(() => {
-    console.log("useEffect running when cameraState changes to", cameraState); // never runs in the cleanup
-    if (camera) {
-      camera.switchToDesiredState(cameraState);
-    }
-  }, [cameraState]);
-
-  useEffect(() => {
-    if (barcodeCaptureMode) {
-      barcodeCaptureMode.isEnabled = isBarcodeCaptureEnabled;
-    }
-  }, [isBarcodeCaptureEnabled]);
 
   const handleAppStateChange = (nextAppState: AppStateStatus) => {
     setAppStateVisible(nextAppState);
@@ -98,92 +110,95 @@ export const Scandit = () => {
     }
   }, [appStateVisible]);
 
-  const setupScanning = () => {
-    console.log("===== setupScanning runs once on mount =====");
-
+  async function setupCamera(): Promise<Camera> {
     // Use the world-facing (back) camera and set it as the frame source of the context. The camera is off by
     // default and must be turned on to start streaming frames to the data capture context for recognition.
-    const cameraSettings = new CameraSettings();
+    const cameraSettings = BarcodeCapture.createRecommendedCameraSettings();
     cameraSettings.preferredResolution = VideoResolution.FullHD;
 
     const camera = Camera.withSettings(cameraSettings);
-    dataCaptureContext.setFrameSource(camera);
-    setCamera(camera);
 
+    if (!camera) {
+      throw new Error("Failed to setup camera");
+    }
+    // Set the camera as the frame source of the data capture context.
+    await dataCaptureContext.setFrameSource(camera);
+
+    // Switch the camera on to start streaming frames and enable the barcode capture mode.
+    await camera.switchToDesiredState(FrameSourceState.On);
+    return camera;
+  }
+
+  function setupScanning(): BarcodeCapture {
     // The barcode capturing process is configured through barcode capture settings
     // and are then applied to the barcode capture instance that manages barcode recognition.
-    const settings = new BarcodeCaptureSettings();
+    const barcodeCaptureSettings = new BarcodeCaptureSettings();
 
     // The settings instance initially has all types of barcodes (symbologies) disabled. For the purpose of this
     // sample we enable a very generous set of symbologies. In your own app ensure that you only enable the
     // symbologies that your app requires as every additional enabled symbology has an impact on processing times.
-    settings.enableSymbologies([
+    barcodeCaptureSettings.enableSymbologies([
       Symbology.EAN13UPCA,
       Symbology.EAN8,
       Symbology.UPCE,
-      Symbology.QR,
-      Symbology.DataMatrix,
       Symbology.Code39,
       Symbology.Code128,
-      Symbology.InterleavedTwoOfFive,
+      Symbology.DataMatrix,
     ]);
+
+    // By setting the radius to zero, the barcode's frame has to contain the point of interest.
+    // The point of interest is at the center of the data capture view by default, as in this case.
+    barcodeCaptureSettings.locationSelection = new RadiusLocationSelection(
+      new NumberWithUnit(0, MeasureUnit.Fraction)
+    );
+
+    // Setting the code duplicate filter to one means that the scanner won't report the same code as recognized
+    // for one second, once it's recognized.
+    barcodeCaptureSettings.codeDuplicateFilter = 1000;
 
     // Some linear/1d barcode symbologies allow you to encode variable-length data. By default, the Scandit
     // Data Capture SDK only scans barcodes in a certain length range. If your application requires scanning of one
     // of these symbologies, and the length is falling outside the default range, you may need to adjust the "active
     // symbol counts" for this symbology. This is shown in the following few lines of code for one of the
     // variable-length symbologies.
-    const symbologySettings = settings.settingsForSymbology(Symbology.Code39);
+    const symbologySettings = barcodeCaptureSettings.settingsForSymbology(
+      Symbology.Code39
+    );
     symbologySettings.activeSymbolCounts = [
       7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     ];
 
     // Create new barcode capture mode with the settings from above.
-    const barcodeCapture = BarcodeCapture.forContext(
-      dataCaptureContext,
-      settings
-    );
+    const barcodeCapture = new BarcodeCapture(barcodeCaptureSettings);
 
     // Register a listener to get informed whenever a new barcode got recognized.
     const barcodeCaptureListener = {
       didScan: async (_: BarcodeCapture, session: BarcodeCaptureSession) => {
         const barcode = session.newlyRecognizedBarcode;
-        if (barcode == null) return;
-
-        const symbology = new SymbologyDescription(barcode.symbology);
-
-        // The `alert` call blocks execution until it's dismissed by the user. As no further frames would be processed
-        // until the alert dialog is dismissed, we're showing the alert through a timeout and disabling the barcode
-        // capture mode until the dialog is dismissed, as you should not block the BarcodeCaptureListener callbacks for
-        // longer periods of time. See the documentation to learn more about this.
-        setIsBarcodeCaptureEnabled(false);
-
-        Alert.alert(
-          "",
-          `Scanned: ${barcode.data} (${symbology.readableName})`,
-          [{ text: "OK", onPress: () => setIsBarcodeCaptureEnabled(true) }],
-          { cancelable: false }
-        );
+        setCode(barcode);
+        setModalVisible(true);
       },
     };
 
     // Add the listener to the barcode capture context.
     barcodeCapture.addListener(barcodeCaptureListener);
 
+    // Add the barcode capture mode to the data capture context.
+    dataCaptureContext.setMode(barcodeCapture);
+
+    return barcodeCapture;
+  }
+
+  function setupOverlay(): BarcodeCaptureOverlay {
     // Add a barcode capture overlay to the data capture view to render the location of captured barcodes on top of
     // the video preview, using the Frame overlay style. This is optional, but recommended for better visual feedback.
-    const overlay = BarcodeCaptureOverlay.withBarcodeCaptureForViewWithStyle(
-      barcodeCapture,
-      null,
-      BarcodeCaptureOverlayStyle.Frame
-    );
-    overlay.viewfinder = new RectangularViewfinder(
-      RectangularViewfinderStyle.Square,
-      RectangularViewfinderLineStyle.Light
-    );
-    viewRef.current?.addOverlay(overlay);
-    setBarcodeCaptureMode(barcodeCapture);
-  };
+    const overlay = new BarcodeCaptureOverlay(barcodeCaptureMode.current);
+    overlay.viewfinder = new AimerViewfinder();
+
+    overlay.brush = new Brush(scannedBrush, scannedBrush, 2);
+
+    return overlay;
+  }
 
   const startCapture = async () => {
     if (lastCommand.current === "startCapture") {
@@ -191,7 +206,7 @@ export const Scandit = () => {
     }
     lastCommand.current = "startCapture";
     startCamera();
-    setIsBarcodeCaptureEnabled(true);
+    barcodeCaptureMode.current.isEnabled = true;
   };
 
   const stopCapture = () => {
@@ -199,32 +214,32 @@ export const Scandit = () => {
       return;
     }
     lastCommand.current = "stopCapture";
-    setIsBarcodeCaptureEnabled(false);
+    barcodeCaptureMode.current.isEnabled = false;
     stopCamera();
   };
 
   const startCamera = () => {
-    // Switch camera on to start streaming frames and enable the barcode capture mode.
-    // The camera is started asynchronously and will take some time to completely turn on.
-    requestCameraPermissionsIfNeeded()
-      .then(() => setCameraState(FrameSourceState.On))
-      .catch(() => BackHandler.exitApp());
+    if (camera.current) {
+      camera.current.switchToDesiredState(FrameSourceState.On);
+    }
   };
 
   const stopCamera = () => {
-    console.log("running stopCamera");
-    console.log("cameraState:", cameraState, setCameraState); // 'off', [Function bound dispatchSetState]
-
-    if (camera) {
-      setCameraState(FrameSourceState.Off);
+    if (camera.current) {
+      camera.current.switchToDesiredState(FrameSourceState.Off);
     }
   };
 
   return (
     <DataCaptureView
-      style={{ flex: 1, width: "100%" }}
+      style={{ flex: 1 }}
       context={dataCaptureContext}
-      ref={viewRef}
+      ref={(view) => {
+        if (view && !viewRef.current) {
+          viewRef.current = view;
+          viewRef.current.addOverlay(overlay.current);
+        }
+      }}
     />
   );
 };

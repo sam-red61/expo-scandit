@@ -39,3 +39,7 @@ app-example
 
 *.ipa
 *.apk
+
+.yarn
+android
+ios
