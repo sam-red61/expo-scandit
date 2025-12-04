@@ -27,6 +27,7 @@ import {
   Brush,
   Color,
   DataCaptureContext,
+  TorchSwitchControl,
 } from "scandit-react-native-datacapture-core";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -53,6 +54,11 @@ export const Scandit = () => {
     overlay.current = setupOverlay();
   }
 
+  const torchControlRef = useRef<TorchSwitchControl>(null!);
+  if (!torchControlRef.current) {
+    torchControlRef.current = setupTorchControl();
+  }
+
   const [code, setCode] = useState<Barcode | null>(null);
   const [isModalVisible, setModalVisible] = useState(false);
 
@@ -73,6 +79,8 @@ export const Scandit = () => {
       barcodeCaptureMode.current = setupScanning();
       overlay.current = setupOverlay();
       viewRef.current?.addOverlay(overlay.current);
+      torchControlRef.current = setupTorchControl();
+      viewRef.current?.addControl(torchControlRef.current);
 
       const initCamera = async () => {
         if (!camera.current) {
@@ -89,6 +97,7 @@ export const Scandit = () => {
         camera.current = null;
         dataCaptureContext.setFrameSource(null);
         viewRef.current?.removeOverlay(overlay.current);
+        viewRef.current?.removeControl(torchControlRef.current);
       };
     }, [])
   );
@@ -202,6 +211,11 @@ export const Scandit = () => {
     return overlay;
   }
 
+  function setupTorchControl(): TorchSwitchControl {
+    const torch = new TorchSwitchControl();
+    return torch;
+  }
+
   const startCapture = async () => {
     if (lastCommand.current === "startCapture") {
       return;
@@ -240,6 +254,7 @@ export const Scandit = () => {
         if (view && !viewRef.current) {
           viewRef.current = view;
           viewRef.current.addOverlay(overlay.current);
+          viewRef.current.addControl(torchControlRef.current);
         }
       }}
     />
